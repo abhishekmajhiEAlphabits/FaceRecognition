@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "967698031915",
+    "project_id": "kotlinhello-216ce",
+    "storage_bucket": "kotlinhello-216ce.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:967698031915:android:8e9a411b99a86e615e516e",
+        "android_client_info": {
+          "package_name": "com.example.facerecognition"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2yC54raVREMdKgAAUUSiXlLrS-1eAHDo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:967698031915:android:040574be971b48725e516e",
+        "android_client_info": {
+          "package_name": "com.example.kotlinhelloworld"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2yC54raVREMdKgAAUUSiXlLrS-1eAHDo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
