@@ -1,62 +1,33 @@
 {
   "project_info": {
-    "project_number": "967698031915",
-    "project_id": "kotlinhello-216ce",
-    "storage_bucket": "kotlinhello-216ce.appspot.com"
+    "project_number": "295727345340",
+    "project_id": "facerecognition-c7526",
+    "storage_bucket": "facerecognition-c7526.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:967698031915:android:8e9a411b99a86e615e516e",
+        "mobilesdk_app_id": "1:295727345340:android:4efaf48c7cf94e07b7eab9",
         "android_client_info": {
           "package_name": "com.example.facerecognition"
         }
       },
       "oauth_client": [
         {
-          "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
+          "client_id": "295727345340-hle4548sspug30fgc1p2buf0kqhuk81i.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyB2yC54raVREMdKgAAUUSiXlLrS-1eAHDo"
+          "current_key": "AIzaSyATza8egJSkTA-5_dqWQeFFZ7ei6icvAYM"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:967698031915:android:040574be971b48725e516e",
-        "android_client_info": {
-          "package_name": "com.example.kotlinhelloworld"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyB2yC54raVREMdKgAAUUSiXlLrS-1eAHDo"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "967698031915-ipl0rr6v2qunv2s64nc1m7ud2blj8vsq.apps.googleusercontent.com",
+              "client_id": "295727345340-hle4548sspug30fgc1p2buf0kqhuk81i.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

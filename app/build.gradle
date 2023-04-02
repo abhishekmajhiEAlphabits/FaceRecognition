@@ -1,11 +1,12 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
+apply plugin: 'com.google.gms.google-services'
 
 android {
     compileSdkVersion 33
     defaultConfig {
-        applicationId "com.example.facerecogntion"
+        applicationId "com.example.facerecognition"
         minSdkVersion 21
         targetSdkVersion 33
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -36,7 +37,13 @@ dependencies {
     //ml-kit dependencies
     implementation 'com.google.firebase:firebase-core:17.5.0'
     implementation platform('com.google.firebase:firebase-bom:31.2.3')
-    implementation 'com.google.mlkit:face-detection:16.1.5'
+//    implementation 'com.google.mlkit:face-detection:16.1.5'
+
+    implementation 'com.google.firebase:firebase-ml-vision:19.0.3'
+//    implementation 'com.google.firebase:firebase-ml-vision-image-label-model:17.0.2'
+    implementation 'com.google.firebase:firebase-ml-vision-face-model:17.0.2'
+    implementation 'com.google.firebase:firebase-ml-model-interpreter:18.0.0'
+    implementation 'com.otaliastudios:cameraview:1.6.0'
 }
 
 
