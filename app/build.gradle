@@ -40,10 +40,25 @@ dependencies {
 //    implementation 'com.google.mlkit:face-detection:16.1.5'
 
     implementation 'com.google.firebase:firebase-ml-vision:19.0.3'
-//    implementation 'com.google.firebase:firebase-ml-vision-image-label-model:17.0.2'
+    implementation 'com.google.firebase:firebase-ml-vision-image-label-model:17.0.2'
     implementation 'com.google.firebase:firebase-ml-vision-face-model:17.0.2'
     implementation 'com.google.firebase:firebase-ml-model-interpreter:18.0.0'
     implementation 'com.otaliastudios:cameraview:1.6.0'
+
+    // Coroutines
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.4.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.4.1'
+
+    // Lifecycle
+    implementation "androidx.lifecycle:lifecycle-extensions:2.2.0"
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.5.1'
+    implementation "androidx.lifecycle:lifecycle-livedata-ktx:2.5.1"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.5.1"
+
+    // Dagger-Hilt
+    implementation "com.google.dagger:hilt-android:2.42"
+    implementation 'androidx.camera:camera-video:1.1.0'
+//    kapt "com.google.dagger:hilt-compiler:2.42"
 }
 
 

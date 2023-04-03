@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.graphics.drawable.BitmapDrawable
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
@@ -19,12 +20,17 @@ import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.Camera2Config
+import androidx.camera.camera2.internal.compat.CameraCharacteristicsCompat
 import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.google.android.gms.tasks.Task
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.firebase.FirebaseApp
@@ -40,7 +46,19 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import com.otaliastudios.cameraview.Facing
-
+import com.otaliastudios.cameraview.Frame
+import com.otaliastudios.cameraview.FrameProcessor
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
+import java.lang.Runnable
+import androidx.lifecycle.lifecycleScope
+import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
 
 class MainActivity : AppCompatActivity() {
 
@@ -48,7 +66,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var processCameraProvider: ProcessCameraProvider
     private lateinit var emotion: TextView
     private lateinit var cameraView: ImageView
-    private lateinit var bmp: Bitmap
+
+    protected val cameraOut = Channel<ByteBuffer>(Channel.BUFFERED)
+    val out: Flow<ByteBuffer> = cameraOut.receiveAsFlow()
+    private var outStreamJob: Job? = null
+    protected val dispatcher = provideDispatcher(nThreads = 1)
+    private val executor = Executors.newSingleThreadExecutor()
+    private val imageAnalysisBuilder = ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .setDefaultResolution(Size(1920,1080))
+
+
+
+    private lateinit var bmps: Bitmap
     var frameCounter = 0
     var lastFpsTimestamp = System.currentTimeMillis()
     val frameCount = 30
@@ -66,23 +96,44 @@ class MainActivity : AppCompatActivity() {
 //        imageProcessor = ImageProcess()
 
         if (allPermissionsGranted()) {
-            init()
+
+            CoroutineScope(Dispatchers.Main).launch {
+                init()
+            }
         } else {
             ActivityCompat.requestPermissions(
                 this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
             )
         }
 
+        CoroutineScope(Dispatchers.Default).launch {
+            outStreamJob?.cancel()
+            outStreamJob = out.onEach { byteBuffer ->
+                val imageBytes = ByteArray(byteBuffer.remaining())
+                byteBuffer.get(imageBytes)
+                val bmp = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+//                CoroutineScope(Dispatchers.IO).launch {
+//                    analyzeImage(bmp)
+//                }
+
+                withContext(Dispatchers.Main) {
+                    cameraView.rotation = -90f
+                    cameraView.setImageBitmap(bmp)
+                }
+            }.launchIn(lifecycleScope)
+
+        }
+
+
+
     }
 
-    @SuppressLint("RestrictedApi")
+    @SuppressLint("RestrictedApi", "UnsafeOptInUsageError")
     private fun init() {
 //        CameraX.initialize(this, Camera2Config.defaultConfig())
         processCameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        processCameraProviderFuture.addListener(Runnable {
-            processCameraProvider = processCameraProviderFuture.get()
-            viewFinder.post { setupCamera() }
-        }, ContextCompat.getMainExecutor(this))
+        processCameraProvider = processCameraProviderFuture.get()
+        setupCamera()
 
     }
 
@@ -93,23 +144,16 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("UnsafeOptInUsageError")
     private fun setupCamera() {
+        val imageAnalysis = imageAnalysisBuilder.build()
         processCameraProvider.unbindAll()
         val camera = processCameraProvider.bindToLifecycle(
             this,
             CameraSelector.DEFAULT_FRONT_CAMERA,
 //            buildPreviewUseCase(),
 //            buildImageCaptureUseCase()
-            buildImageAnalysisUseCase()
+            imageAnalysis
         )
 
-        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val cameraId = manager.cameraIdList[1];
-        val characteristics = manager.getCameraCharacteristics(cameraId);
-        val fpsRanges =
-            characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
-        Log.d(TAG, "ranges :$fpsRanges")
-
-//        var camera2Extender = Camera2Config.
         val cameraControl = camera.cameraControl
         val camera2CameraControl = Camera2CameraControl.from(cameraControl)
 
@@ -120,12 +164,12 @@ class MainActivity : AppCompatActivity() {
             )
             .setCaptureRequestOption(
                 CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                Range.create(50, 60)
+                Range.create(60, 60)
             )
-            .setCaptureRequestOption(
-                CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
-                CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO
-            )
+//            .setCaptureRequestOption(
+//                CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+//                CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO
+//            )
 //            .setCaptureRequestOption(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_OFF)
 //            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_OFF)
 //            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 1)
@@ -140,6 +184,14 @@ class MainActivity : AppCompatActivity() {
             )*/
             .build()
         camera2CameraControl.captureRequestOptions = captureRequestOptions
+        CoroutineScope(Dispatchers.IO).launch {
+            cameraPreviewCallBack(imageAnalysis)
+        }
+
+//        processCameraProviderFuture.addListener(Runnable {
+//
+////            viewFinder.post { setupCamera() }
+//        }, executor)
 //        setupTapForFocus(camera.cameraControl)
     }
 
@@ -158,63 +210,135 @@ class MainActivity : AppCompatActivity() {
 //        return preview
 //    }
 
-    @SuppressLint("UnsafeExperimentalUsageError", "RestrictedApi")
-    private fun buildImageAnalysisUseCase(): ImageAnalysis {
-        val display = viewFinder.display
-        val metrics = DisplayMetrics().also { display.getMetrics(it) }
-        val analysis = ImageAnalysis.Builder()
-//            .setTargetRotation(display.rotation)
-//            .setTargetResolution(Size(metrics.widthPixels, metrics.heightPixels))
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER)
-//            .setImageQueueDepth(10)
-//            .setTargetResolution(Size(1920, 1080))
-//            .setDefaultResolution(Size(1920, 1080))
-//            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-        analysis.setAnalyzer(
-            Executors.newSingleThreadExecutor(),
-            ImageAnalysis.Analyzer { imageProxy ->
-//                Log.d("CameraFragment", "Image analysis result $imageProxy")
-//                detect(imageProxy)
-//                val imageBytes = imageProxyToByteArray(imageProxy)
-                getResolution(imageProxy)
-//                Log.d(TAG, "byte array : $imageBytes")
-                imageProxy.use {
-//                     Compute the FPS of the entire pipeline
+    private fun cameraPreviewCallBack(imageAnalysis: ImageAnalysis) {
+        processCameraProviderFuture.addListener(Runnable {
+            val frameCount = 30
+            imageAnalysis.setAnalyzer(executor, ImageAnalysis.Analyzer { image ->
+
+                image.use {
+//                    // Compute the FPS of the entire pipeline
+                    val now = System.currentTimeMillis()
+                    Log.d(TAG, "fpss : $now")
                     if (++frameCounter % frameCount == 0) {
                         frameCounter = 0
                         val now = System.currentTimeMillis()
                         val delta = now - lastFpsTimestamp
                         val fps = 1000 * frameCount.toFloat() / delta
-                        Log.d(TAG, "FPSS: ${"%.02f".format(fps)}")
+                        Log.d(TAG,"FPS: ${"%.02f".format(fps)}")
                         lastFpsTimestamp = now
-                    } else {
-
                     }
-//                        Log.d("CameraFragment", "Image Bitmap ${image.toString()}")
                     try {
-                        val img = imageProxy.toJpeg()
-                        val imageBytes = ByteArray(img!!.remaining())
-                        img.get(imageBytes)
-                        bmp = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-                        Log.d(TAG, "bitmap : $img")
-//                        process(bmp)
-                        analyzeImage(bmp)
-//                        detect(bmp)
-//                        runOnUiThread(Runnable {
-//                            kotlin.run {
-////                                cameraView.setImageBitmap(bmp)
-////                                cameraView.rotation = -90f
-//                                analyzeImage(bmp)
-//                            }
-//                        })
+                        val img = image.toJpeg()
+                            CoroutineScope(Dispatchers.IO).launch {
+                                cameraOut.send(img ?: throw Throwable("Couldn't get JPEG image"))
+                            }
+
                     } catch (t: Throwable) {
-                        Log.d("CameraFragment", "Error in getting img $t")
+                       Log.e(TAG,"Error in getting Img : ${t.message}")
                     }
                 }
-//                imageProxy.close()
             })
-        return analysis
+        }, executor)
+    }
+
+
+//    @SuppressLint("UnsafeExperimentalUsageError", "RestrictedApi")
+//    private fun buildImageAnalysisUseCase(): ImageAnalysis {
+//        var count = 0
+////        val display = viewFinder.display
+////        val metrics = DisplayMetrics().also { display.getMetrics(it) }
+//        val analysis = ImageAnalysis.Builder()
+////            .setTargetRotation(display.rotation)
+////            .setTargetResolution(Size(metrics.widthPixels, metrics.heightPixels))
+////            .setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER)
+////            .setImageQueueDepth(10)
+////            .setTargetResolution(Size(1920, 1080))
+////            .setDefaultResolution(Size(1920, 1080))
+//            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+//            .build()
+//        analysis.setAnalyzer(
+//            Executors.newSingleThreadExecutor(),
+//            ImageAnalysis.Analyzer { imageProxy ->
+//                val now = System.currentTimeMillis()
+////                Log.d(TAG, "fpss ;$now")
+////                detect(imageProxy)
+////                val imageBytes = imageProxyToByteArray(imageProxy)
+////                getResolution(imageProxy)
+////                Log.d(TAG, "byte array : $imageBytes")
+//                imageProxy.use {
+////                     Compute the FPS of the entire pipeline
+//                    if (++frameCounter % frameCount == 0) {
+//                        frameCounter = 0
+//                        val now = System.currentTimeMillis()
+//                        val delta = now - lastFpsTimestamp
+//                        val fps = 1000 * frameCount.toFloat() / delta
+//                        Log.d(TAG, "FPSS: ${"%.02f".format(fps)}")
+//                        lastFpsTimestamp = now
+//                    } else {
+//
+//                    }
+//                    var img = imageProxy.toJpeg()
+//                    CoroutineScope(dispatcher).launch(dispatcher) {
+//                        cameraOut.send(img ?: throw Throwable("Couldn't get JPEG image"))
+//                    }
+////                    val imageBytes = ByteArray(img?.remaining()!!)
+////                    img.get(imageBytes)
+////                    val bmp = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+////                    outStreamJob?.cancel()
+////                    outStreamJob = out.onEach { byteBuffer ->
+////                        val imageBytes = ByteArray(byteBuffer.remaining())
+////                        byteBuffer.get(imageBytes)
+////                        val bmp = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+////                        withContext(Dispatchers.Main) {
+////                            cameraView.rotation = -90f
+////                            cameraView.setImageBitmap(bmp)
+////                        }
+////                    }.launchIn(lifecycleScope)
+////                    launch(Dispatchers.Default) {
+////                        withContext(Dispatchers.Main) {
+////                            cameraView.rotation = -90f
+////                            cameraView.setImageBitmap(bmp)
+////                        }
+////                    }
+//
+////                        Log.d("CameraFragment", "Image Bitmap ${image.toString()}")
+////                    CoroutineScope(Dispatchers.Main).launch {
+////                        try {
+////
+////                            val imageBytes = ByteArray(img!!.remaining())
+////                            img.get(imageBytes)
+////                            val bmp = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+////                            cameraView.setImageBitmap(bmp)
+////                            cameraView.rotation = -90f
+////////                        Log.d(TAG, "bitmap : $img")
+//////                        if (count == 2) {
+//////                            process(bmp)
+//////                        }
+//////                        count++
+//////                        process(bmp)
+//////                        analyzeImage(bmp)
+//////                        detect(bmp)
+//////                        runOnUiThread(Runnable {
+//////                            kotlin.run {
+//////                                cameraView.setImageBitmap(bmp)
+//////                                cameraView.rotation = -90f
+////////                                analyzeImage(bmp)
+//////                            }
+//////                        })
+////                        } catch (t: Throwable) {
+////                            Log.d("CameraFragment", "Error in getting img $t")
+////                        }
+////                    }
+//
+//                }
+////                imageProxy.close()
+//            })
+//        return analysis
+//    }
+
+    private fun callImage() {
+        val bitmap = (cameraView.drawable as BitmapDrawable).bitmap
+        process(bitmap)
     }
 
     @SuppressLint("UnsafeExperimentalUsageError", "UnsafeOptInUsageError")
@@ -432,38 +556,41 @@ class MainActivity : AppCompatActivity() {
         return innerRect
     }
 
-    private fun process(imageBitmap: Bitmap) {
-//        val width = imageBitmap.width
-//        val height = imageBitmap.height
+    fun process(imageBitmap: Bitmap) {
+        val width = imageBitmap.width
+        val height = imageBitmap.height
 
-//        val metadata = FirebaseVisionImageMetadata.Builder()
-//            .setWidth(width)
-//            .setHeight(height)
-//            .setFormat(FirebaseVisionImageMetadata.IMAGE_FORMAT_NV21)
+        val metadata = FirebaseVisionImageMetadata.Builder()
+            .setWidth(width)
+            .setHeight(height)
+            .setFormat(FirebaseVisionImageMetadata.IMAGE_FORMAT_NV21)
 //            .setRotation(if (cameraFacing == Facing.FRONT) FirebaseVisionImageMetadata.ROTATION_270 else FirebaseVisionImageMetadata.ROTATION_90)
-//            .build()
+            .build()
 
-//        val firebaseVisionImage = FirebaseVisionImage.fromByteArray(imagebyteArray, metadata)
+//         val firebaseVisionImage = FirebaseVisionImage.fromByteArray(frame.data, metadata)
         val firebaseVisionImage = FirebaseVisionImage.fromBitmap(imageBitmap)
         val options = FirebaseVisionFaceDetectorOptions.Builder()
             .setContourMode(FirebaseVisionFaceDetectorOptions.ALL_CONTOURS)
+            .setPerformanceMode(FirebaseVisionFaceDetectorOptions.FAST)
+            .setLandmarkMode(FirebaseVisionFaceDetectorOptions.ALL_LANDMARKS)
+            .setClassificationMode(FirebaseVisionFaceDetectorOptions.ALL_CLASSIFICATIONS)
             .build()
         val faceDetector = FirebaseVision.getInstance().getVisionFaceDetector(options)
         faceDetector.detectInImage(firebaseVisionImage)
             .addOnSuccessListener {
-                cameraView.setImageBitmap(null)
-                it.forEach {
-                    val contour = it.getContour(FirebaseVisionFaceContour.FACE)
-                    contour.points.forEach {
-                        Log.d(TAG, "Point at ${it.x}, ${it.y}")
-                    }
-                    // More code here
-                }
+//                cameraView.setImageBitmap(null)
+//                it.forEach {
+//                    val contour = it.getContour(FirebaseVisionFaceContour.FACE)
+//                    contour.points.forEach {
+//                        Log.d(TAG, "Point at ${it.x}, ${it.y}")
+//                    }
+//                    // More code here
+//                }
 
                 val bitmap = imageBitmap.copy(Bitmap.Config.ARGB_8888, true)
 //                val bitmap = Bitmap.createBitmap(
-//                    imageBitmap.height,
-//                    imageBitmap.width,
+//                    height,
+//                    width,
 //                    Bitmap.Config.ARGB_8888
 //                )
                 val canvas = Canvas(bitmap)
@@ -683,22 +810,29 @@ class MainActivity : AppCompatActivity() {
                     }
 
 
-                    if (cameraFacing == Facing.FRONT) {
-                        val matrix = Matrix()
-                        matrix.preScale(-1F, 1F)
-                        val flippedBitmap = Bitmap.createBitmap(
-                            bitmap,
-                            0,
-                            0,
-                            bitmap.width,
-                            bitmap.height,
-                            matrix,
-                            true
-                        )
-                        cameraView.setImageBitmap(flippedBitmap)
-                    } else {
-                        cameraView.setImageBitmap(bitmap)
-                    }
+//                    if (cameraFacing == Facing.FRONT) {
+//                        val matrix = Matrix()
+//                        matrix.preScale(-1F, 1F)
+//                        val flippedBitmap = Bitmap.createBitmap(
+//                            bitmap,
+//                            0,
+//                            0,
+//                            bitmap.width,
+//                            bitmap.height,
+//                            matrix,
+//                            true
+//                        )
+//                        cameraView.setImageBitmap(flippedBitmap)
+//                    } else {
+//                        cameraView.setImageBitmap(bitmap)
+//                    }
+                    cameraView.setImageBitmap(bitmap)
+//                    runOnUiThread(Runnable {
+//                        kotlin.run {
+//                            cameraView.setImageBitmap(bitmap)
+//                            cameraView.rotation = -90f
+//                        }
+//                    })
                 }
 
             }
@@ -738,9 +872,35 @@ class MainActivity : AppCompatActivity() {
                 faceTextPaint
             )
 
+//            val contour = face.getContour(FirebaseVisionFaceContour.FACE)
+//            contour.points.forEach {
+//                println("Pointss at ${it.x}, ${it.y}")
+//            }
+//
+            val faceContours = face.getContour(FirebaseVisionFaceContour.FACE).points
+            for ((i, contour) in faceContours.withIndex()) {
+                if (i != faceContours.lastIndex)
+                    canvas.drawLine(
+                        contour.x,
+                        contour.y,
+                        faceContours[i + 1].x,
+                        faceContours[i + 1].y,
+                        facePaint
+                    )
+                else
+                    canvas.drawLine(
+                        contour.x,
+                        contour.y,
+                        faceContours[0].x,
+                        faceContours[0].y,
+                        facePaint
+                    )
+            }
+
             if (face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EYE) != null) {
                 val leftEye = face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EYE)!!
                 canvas.drawCircle(leftEye.position.x, leftEye.position.y, 8F, landmarkPaint)
+//                canvas.drawLine()
             }
             if (face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EYE) != null) {
                 val rightEye = face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EYE)!!
@@ -787,7 +947,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun analyzeImage(image: Bitmap?) {
+    fun analyzeImage(image: Bitmap?) {
         if (image == null) {
             Toast.makeText(this, "There was some error", Toast.LENGTH_SHORT).show()
             return
@@ -804,6 +964,9 @@ class MainActivity : AppCompatActivity() {
             .setPerformanceMode(FirebaseVisionFaceDetectorOptions.ACCURATE)
             .setLandmarkMode(FirebaseVisionFaceDetectorOptions.ALL_LANDMARKS)
             .setClassificationMode(FirebaseVisionFaceDetectorOptions.ALL_CLASSIFICATIONS)
+            .setContourMode(
+                FirebaseVisionFaceDetectorOptions.ALL_CONTOURS
+            )
             .build()
         val faceDetector = FirebaseVision.getInstance().getVisionFaceDetector(options)
         faceDetector.detectInImage(firebaseVisionImage)
