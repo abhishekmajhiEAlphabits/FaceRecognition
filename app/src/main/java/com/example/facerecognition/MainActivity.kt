@@ -6,48 +6,43 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.os.Bundle
-import android.util.DisplayMetrics
 import android.util.Log
 import android.util.Range
-import android.util.Size
+import android.view.Display
+import android.view.Surface
+import android.view.Surface.ROTATION_90
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.camera2.Camera2Config
-import androidx.camera.camera2.internal.compat.CameraCharacteristicsCompat
 import androidx.camera.camera2.interop.Camera2CameraControl
-import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ProcessLifecycleOwner
-import com.google.android.gms.tasks.Task
+import androidx.lifecycle.lifecycleScope
 import com.google.common.util.concurrent.ListenableFuture
-import com.google.firebase.FirebaseApp
 import com.google.firebase.ml.vision.FirebaseVision
 import com.google.firebase.ml.vision.common.FirebaseVisionImage
 import com.google.firebase.ml.vision.common.FirebaseVisionImageMetadata
 import com.google.firebase.ml.vision.face.FirebaseVisionFace
 import com.google.firebase.ml.vision.face.FirebaseVisionFaceContour
 import com.google.firebase.ml.vision.face.FirebaseVisionFaceDetectorOptions
-import com.google.firebase.ml.vision.face.FirebaseVisionFaceLandmark
-import kotlinx.android.synthetic.main.activity_main.*
-import java.nio.ByteBuffer
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import com.google.mediapipe.formats.proto.LandmarkProto
+import com.google.mediapipe.solutioncore.SolutionGlSurfaceView
+import com.google.mediapipe.solutions.facemesh.FaceMesh
+import com.google.mediapipe.solutions.facemesh.FaceMeshOptions
+import com.google.mediapipe.solutions.facemesh.FaceMeshResult
 import com.otaliastudios.cameraview.Facing
-import com.otaliastudios.cameraview.Frame
-import com.otaliastudios.cameraview.FrameProcessor
+import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -55,30 +50,35 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import java.lang.Runnable
-import androidx.lifecycle.lifecycleScope
-import dagger.hilt.android.AndroidEntryPoint
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
+import java.nio.ByteBuffer
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
 
 class MainActivity : AppCompatActivity() {
+
+    private var facemesh: FaceMesh? = null
+    private var imageView: FaceMeshResultImageView? = null
+    private var glSurfaceView: SolutionGlSurfaceView<FaceMeshResult>? = null
 
     private lateinit var processCameraProviderFuture: ListenableFuture<ProcessCameraProvider>
     private lateinit var processCameraProvider: ProcessCameraProvider
     private lateinit var emotion: TextView
     private lateinit var cameraView: ImageView
+    private lateinit var frameLayout: FrameLayout
 
     protected val cameraOut = Channel<ByteBuffer>(Channel.BUFFERED)
     val out: Flow<ByteBuffer> = cameraOut.receiveAsFlow()
     private var outStreamJob: Job? = null
     protected val dispatcher = provideDispatcher(nThreads = 1)
     private val executor = Executors.newSingleThreadExecutor()
-    private val imageAnalysisBuilder = ImageAnalysis.Builder()
-        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-        .setDefaultResolution(Size(1920,1080))
 
+    //    private val imageAnalysisBuilder = ImageAnalysis.Builder()
+//        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+//        .setTargetRotation(getRotation().toInt())
+//        .setDefaultResolution(Size(1920,1080))
+    private var imageAnalysisBuilder: ImageAnalysis.Builder? = null
 
-
-    private lateinit var bmps: Bitmap
     var frameCounter = 0
     var lastFpsTimestamp = System.currentTimeMillis()
     val frameCount = 30
@@ -90,7 +90,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        imageView = FaceMeshResultImageView(applicationContext)
+        frameLayout = findViewById<FrameLayout>(R.id.preview_display_layout)
+        imageAnalysisBuilder = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+//        .setTargetRotation(ROTATION_90)
 
+        var count = 0
         emotion = findViewById(R.id.mEmotion)
         cameraView = findViewById(R.id.cameraImage)
 //        imageProcessor = ImageProcess()
@@ -107,24 +113,57 @@ class MainActivity : AppCompatActivity() {
         }
 
         CoroutineScope(Dispatchers.Default).launch {
+
             outStreamJob?.cancel()
             outStreamJob = out.onEach { byteBuffer ->
                 val imageBytes = ByteArray(byteBuffer.remaining())
                 byteBuffer.get(imageBytes)
                 val bmp = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                val matrix = Matrix()
+                matrix.postRotate(-90F)
+//                matrix.postScale(1F,-1F,bmp.width/2f,bmp.height/2f)
+                val rotatedBitmap =
+                    Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+//                val rotatedBitmap = Bitmap.createBitmap(bmp.width,bmp.height,bmp.config)
 //                CoroutineScope(Dispatchers.IO).launch {
 //                    analyzeImage(bmp)
 //                }
+//                if (count == 2 ) {
 
                 withContext(Dispatchers.Main) {
-                    cameraView.rotation = -90f
-                    cameraView.setImageBitmap(bmp)
+//                    analyzeImage(bmp)
+                    setUpStreaming(bmp)
+//                    cameraView.rotation = -90f
+//                    cameraView.setImageBitmap(bmp)
                 }
+//                    cameraView.rotation = -90f
+//                    cameraView.setImageBitmap(bmp)
+////                        process(bmp)
+//                    CoroutineScope(Dispatchers.IO).launch {
+//                        setUpStreaming(bmp)
+//                    }
+//                }
+//                }
+//                count++
             }.launchIn(lifecycleScope)
-
         }
 
 
+    }
+
+    fun getRotation(): Float {
+        val display: Display =
+            (applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
+        val rotation: Int = display.getRotation()
+//        val rotation: Int = windowManager.getDefaultDisplay().rotation
+        var degrees = 0F
+        when (rotation) {
+            Surface.ROTATION_0 -> degrees = 90F
+            Surface.ROTATION_90 -> degrees = 180F
+            Surface.ROTATION_180 -> degrees = 90F
+            Surface.ROTATION_270 -> degrees = 0F
+        }
+        return degrees
 
     }
 
@@ -135,6 +174,49 @@ class MainActivity : AppCompatActivity() {
         processCameraProvider = processCameraProviderFuture.get()
         setupCamera()
 
+        // Initializes a new MediaPipe Face Mesh solution instance in the streaming mode.
+        facemesh = FaceMesh(
+            applicationContext,
+            FaceMeshOptions.builder()
+                .setStaticImageMode(false)
+                .setRefineLandmarks(true)
+                .setRunOnGpu(true)
+                .build()
+        )
+
+        // Initializes a new Gl surface view with a user-defined FaceMeshResultGlRenderer.
+        glSurfaceView = SolutionGlSurfaceView(
+            applicationContext,
+            facemesh!!.glContext,
+            facemesh!!.glMajorVersion
+        )
+        glSurfaceView!!.setSolutionResultRenderer(FaceMeshResultGlRenderer())
+        glSurfaceView!!.setRenderInputImage(true)
+
+        facemesh!!.setResultListener { faceMeshResult: FaceMeshResult ->
+            logNoseLandmark(faceMeshResult,  /*showPixelValues=*/false)
+//            glSurfaceView!!.setRenderData(faceMeshResult)
+//            glSurfaceView!!.requestRender()
+
+            imageView?.setFaceMeshResult(faceMeshResult);
+            runOnUiThread(Runnable {
+                kotlin.run { imageView?.update() }
+            })
+
+        }
+//        val frameLayout = findViewById<FrameLayout>(R.id.preview_display_layout)
+//        imageView!!.setVisibility(View.GONE)
+        frameLayout.removeAllViewsInLayout()
+//        frameLayout.addView(glSurfaceView)
+//        glSurfaceView!!.visibility = View.VISIBLE
+//        frameLayout.requestLayout()
+        imageView!!.setImageDrawable(null);
+        frameLayout.addView(imageView);
+        imageView!!.setVisibility(View.VISIBLE);
+        imageView!!.rotation = getRotation()
+        imageView!!.scaleX = -1F
+
+
     }
 
     private fun takePhoto() {}
@@ -144,7 +226,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("UnsafeOptInUsageError")
     private fun setupCamera() {
-        val imageAnalysis = imageAnalysisBuilder.build()
+        val imageAnalysis = imageAnalysisBuilder!!.build()
         processCameraProvider.unbindAll()
         val camera = processCameraProvider.bindToLifecycle(
             this,
@@ -153,6 +235,20 @@ class MainActivity : AppCompatActivity() {
 //            buildImageCaptureUseCase()
             imageAnalysis
         )
+//
+//        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+//        val cameraId = manager.cameraIdList[1];
+//        val characteristics = manager.getCameraCharacteristics(cameraId);
+//        val fpsRanges =
+//            characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+//        Log.d(TAG, "ranges :$fpsRanges")
+//        for (range in fpsRanges!!) {
+//            int upper = range . getUpper ();
+//            int lower = range . getLower ();
+//            // 10 - min range upper for my needs
+//            Log.e("Upper fps :", "" + upper);
+//            Log.e("range fps :", "" + range);
+//        }
 
         val cameraControl = camera.cameraControl
         val camera2CameraControl = Camera2CameraControl.from(cameraControl)
@@ -216,25 +312,25 @@ class MainActivity : AppCompatActivity() {
             imageAnalysis.setAnalyzer(executor, ImageAnalysis.Analyzer { image ->
 
                 image.use {
-//                    // Compute the FPS of the entire pipeline
-                    val now = System.currentTimeMillis()
-                    Log.d(TAG, "fpss : $now")
+                    // Compute the FPS of the entire pipeline
+//                    val now = System.currentTimeMillis()
+//                    Log.d(TAG, "fpss : $now")
                     if (++frameCounter % frameCount == 0) {
                         frameCounter = 0
                         val now = System.currentTimeMillis()
                         val delta = now - lastFpsTimestamp
                         val fps = 1000 * frameCount.toFloat() / delta
-                        Log.d(TAG,"FPS: ${"%.02f".format(fps)}")
+                        Log.d(TAG, "FPS: ${"%.02f".format(fps)}")
                         lastFpsTimestamp = now
                     }
                     try {
                         val img = image.toJpeg()
-                            CoroutineScope(Dispatchers.IO).launch {
-                                cameraOut.send(img ?: throw Throwable("Couldn't get JPEG image"))
-                            }
+                        CoroutineScope(Dispatchers.IO).launch {
+                            cameraOut.send(img ?: throw Throwable("Couldn't get JPEG image"))
+                        }
 
                     } catch (t: Throwable) {
-                       Log.e(TAG,"Error in getting Img : ${t.message}")
+                        Log.e(TAG, "Error in getting Img : ${t.message}")
                     }
                 }
             })
@@ -571,9 +667,6 @@ class MainActivity : AppCompatActivity() {
         val firebaseVisionImage = FirebaseVisionImage.fromBitmap(imageBitmap)
         val options = FirebaseVisionFaceDetectorOptions.Builder()
             .setContourMode(FirebaseVisionFaceDetectorOptions.ALL_CONTOURS)
-            .setPerformanceMode(FirebaseVisionFaceDetectorOptions.FAST)
-            .setLandmarkMode(FirebaseVisionFaceDetectorOptions.ALL_LANDMARKS)
-            .setClassificationMode(FirebaseVisionFaceDetectorOptions.ALL_CLASSIFICATIONS)
             .build()
         val faceDetector = FirebaseVision.getInstance().getVisionFaceDetector(options)
         faceDetector.detectInImage(firebaseVisionImage)
@@ -826,13 +919,13 @@ class MainActivity : AppCompatActivity() {
 //                    } else {
 //                        cameraView.setImageBitmap(bitmap)
 //                    }
-                    cameraView.setImageBitmap(bitmap)
-//                    runOnUiThread(Runnable {
-//                        kotlin.run {
-//                            cameraView.setImageBitmap(bitmap)
-//                            cameraView.rotation = -90f
-//                        }
-//                    })
+//                    cameraView.setImageBitmap(bitmap)
+                    runOnUiThread(Runnable {
+                        kotlin.run {
+                            cameraView.setImageBitmap(bitmap)
+                            cameraView.rotation = -90f
+                        }
+                    })
                 }
 
             }
@@ -847,6 +940,13 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "There was some error", Toast.LENGTH_SHORT).show()
             return
         }
+        runOnUiThread(Runnable {
+            kotlin.run {
+                cameraView.setImageBitmap(image)
+                cameraView.rotation = -90f
+
+            }
+        })
 
         val canvas = Canvas(image)
         val facePaint = Paint()
@@ -872,10 +972,10 @@ class MainActivity : AppCompatActivity() {
                 faceTextPaint
             )
 
-//            val contour = face.getContour(FirebaseVisionFaceContour.FACE)
-//            contour.points.forEach {
-//                println("Pointss at ${it.x}, ${it.y}")
-//            }
+            val contour = face.getContour(FirebaseVisionFaceContour.FACE)
+            contour.points.forEach {
+                println("Pointss at ${it.x}, ${it.y}")
+            }
 //
             val faceContours = face.getContour(FirebaseVisionFaceContour.FACE).points
             for ((i, contour) in faceContours.withIndex()) {
@@ -897,49 +997,67 @@ class MainActivity : AppCompatActivity() {
                     )
             }
 
-            if (face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EYE) != null) {
-                val leftEye = face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EYE)!!
-                canvas.drawCircle(leftEye.position.x, leftEye.position.y, 8F, landmarkPaint)
-//                canvas.drawLine()
-            }
-            if (face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EYE) != null) {
-                val rightEye = face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EYE)!!
-                canvas.drawCircle(rightEye.position.x, rightEye.position.y, 8F, landmarkPaint)
-            }
-            if (face.getLandmark(FirebaseVisionFaceLandmark.NOSE_BASE) != null) {
-                val nose = face.getLandmark(FirebaseVisionFaceLandmark.NOSE_BASE)!!
-                canvas.drawCircle(nose.position.x, nose.position.y, 8F, landmarkPaint)
-            }
-            if (face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EAR) != null) {
-                val leftEar = face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EAR)!!
-                canvas.drawCircle(leftEar.position.x, leftEar.position.y, 8F, landmarkPaint)
-            }
-            if (face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EAR) != null) {
-                val rightEar = face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EAR)!!
-                canvas.drawCircle(rightEar.position.x, rightEar.position.y, 8F, landmarkPaint)
-            }
-            if (face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_LEFT) != null && face.getLandmark(
-                    FirebaseVisionFaceLandmark.MOUTH_BOTTOM
-                ) != null && face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_RIGHT) != null
-            ) {
-                val leftMouth = face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_LEFT)!!
-                val bottomMouth = face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_BOTTOM)!!
-                val rightMouth = face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_RIGHT)!!
-                canvas.drawLine(
-                    leftMouth.position.x,
-                    leftMouth.position.y,
-                    bottomMouth.position.x,
-                    bottomMouth.position.y,
-                    landmarkPaint
-                )
-                canvas.drawLine(
-                    bottomMouth.position.x,
-                    bottomMouth.position.y,
-                    rightMouth.position.x,
-                    rightMouth.position.y,
-                    landmarkPaint
-                )
-            }
+//            if (face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EYE) != null) {
+//                val leftEye = face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EYE)!!
+//                canvas.drawCircle(leftEye.position.x, leftEye.position.y, 8F, landmarkPaint)
+////                canvas.drawLine()
+//            }
+//            if (face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EYE) != null) {
+//                val rightEye = face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EYE)!!
+//                canvas.drawCircle(rightEye.position.x, rightEye.position.y, 8F, landmarkPaint)
+//            }
+//            if (face.getLandmark(FirebaseVisionFaceLandmark.NOSE_BASE) != null) {
+//                val nose = face.getLandmark(FirebaseVisionFaceLandmark.NOSE_BASE)!!
+//                canvas.drawCircle(nose.position.x, nose.position.y, 8F, landmarkPaint)
+//            }
+//            if (face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EAR) != null) {
+//                val leftEar = face.getLandmark(FirebaseVisionFaceLandmark.LEFT_EAR)!!
+//                canvas.drawCircle(leftEar.position.x, leftEar.position.y, 8F, landmarkPaint)
+//            }
+//            if (face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EAR) != null) {
+//                val rightEar = face.getLandmark(FirebaseVisionFaceLandmark.RIGHT_EAR)!!
+//                canvas.drawCircle(rightEar.position.x, rightEar.position.y, 8F, landmarkPaint)
+//            }
+//            if (face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_LEFT) != null && face.getLandmark(
+//                    FirebaseVisionFaceLandmark.MOUTH_BOTTOM
+//                ) != null && face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_RIGHT) != null
+//            ) {
+//                val leftMouth = face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_LEFT)!!
+//                val bottomMouth = face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_BOTTOM)!!
+//                val rightMouth = face.getLandmark(FirebaseVisionFaceLandmark.MOUTH_RIGHT)!!
+//                canvas.drawLine(
+//                    leftMouth.position.x,
+//                    leftMouth.position.y,
+//                    bottomMouth.position.x,
+//                    bottomMouth.position.y,
+//                    landmarkPaint
+//                )
+//                canvas.drawLine(
+//                    bottomMouth.position.x,
+//                    bottomMouth.position.y,
+//                    rightMouth.position.x,
+//                    rightMouth.position.y,
+//                    landmarkPaint
+//                )
+//            }
+
+            runOnUiThread(Runnable {
+                kotlin.run {
+                    cameraView.setImageBitmap(image)
+                    cameraView.rotation = -90f
+
+                }
+            })
+
+//            if (faces.size >= 1) {
+//                runOnUiThread(Runnable {
+//                    kotlin.run {
+//                        cameraView.setImageBitmap(image)
+//                        cameraView.rotation = -90f
+//
+//                    }
+//                })
+//            }
 
 //            faceDetectionModels.add(FaceDetectionModel(index, "Smiling Probability  ${face.smilingProbability}"))
 //            faceDetectionModels.add(FaceDetectionModel(index, "Left Eye Open Probability  ${face.leftEyeOpenProbability}"))
@@ -961,26 +1079,34 @@ class MainActivity : AppCompatActivity() {
 
         val firebaseVisionImage = FirebaseVisionImage.fromBitmap(image)
         val options = FirebaseVisionFaceDetectorOptions.Builder()
-            .setPerformanceMode(FirebaseVisionFaceDetectorOptions.ACCURATE)
+            .setPerformanceMode(FirebaseVisionFaceDetectorOptions.FAST)
             .setLandmarkMode(FirebaseVisionFaceDetectorOptions.ALL_LANDMARKS)
             .setClassificationMode(FirebaseVisionFaceDetectorOptions.ALL_CLASSIFICATIONS)
-            .setContourMode(
-                FirebaseVisionFaceDetectorOptions.ALL_CONTOURS
-            )
+//            .setContourMode(
+//                FirebaseVisionFaceDetectorOptions.ALL_CONTOURS
+//            )
+//            .enableTracking()
             .build()
         val faceDetector = FirebaseVision.getInstance().getVisionFaceDetector(options)
         faceDetector.detectInImage(firebaseVisionImage)
             .addOnSuccessListener {
                 val mutableImage = image.copy(Bitmap.Config.ARGB_8888, true)
-
-                detectFaces(it, mutableImage)
-                runOnUiThread(Runnable {
-                    kotlin.run {
-                        cameraView.setImageBitmap(mutableImage)
-                        cameraView.rotation = -90f
-
-                    }
-                })
+//                val mutableImage = Bitmap.createBitmap(
+//                    image.height,
+//                    image.width,
+//                    Bitmap.Config.ARGB_8888
+//                )
+//                runOnUiThread(Runnable {
+//                    kotlin.run {
+//                        cameraView.setImageBitmap(mutableImage)
+//                        cameraView.rotation = -90f
+//
+//                    }
+//                })
+                CoroutineScope(Dispatchers.IO).launch {
+                    detectFaces(it, mutableImage)
+                }
+//                detectFaces(it, mutableImage)
 //                hideProgress()
 //                bottomSheetRecyclerView.adapter?.notifyDataSetChanged()
 //                bottomSheetBehavior.state = BottomSheetBehavior.STATE_EXPANDED
@@ -989,6 +1115,67 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "There was some error", Toast.LENGTH_SHORT).show()
 //                hideProgress()
             }
+    }
+
+    fun setUpStreaming(bitmap: Bitmap) {
+
+        CoroutineScope(Dispatchers.IO).launch {
+
+            val now = System.currentTimeMillis()
+            facemesh!!.send(bitmap, now)
+
+            //enable fps algorithm at one place only. else it will add the previous fps also and show incorrect fps.
+//            if (++frameCounter % frameCount == 0) {
+//                frameCounter = 0
+//                val now = System.currentTimeMillis()
+//                val delta = now - lastFpsTimestamp
+//                val fps = 1000 * frameCount.toFloat() / delta
+//                Log.d(TAG, "FPS in mediapipe: ${"%.02f".format(fps)}")
+//                lastFpsTimestamp = now
+//            }
+
+
+        }
+//        glSurfaceView!!.post { startCamera() }
+
+    }
+
+    private fun logNoseLandmark(result: FaceMeshResult?, showPixelValues: Boolean) {
+        if (result == null || result.multiFaceLandmarks().isEmpty()) {
+            return
+        }
+        val noseLandmark: LandmarkProto.NormalizedLandmark =
+            result.multiFaceLandmarks()[0].landmarkList[477] //total 477 points
+        // For Bitmaps, show the pixel values. For texture inputs, show the normalized coordinates.
+        if (showPixelValues) {
+            val width = result.inputBitmap().width
+            val height = result.inputBitmap().height
+            Log.i(
+                TAG,
+                java.lang.String.format(
+                    "MediaPipe Face Mesh nose coordinates (pixel values): x=%f, y=%f",
+                    noseLandmark.getX() * width, noseLandmark.getY() * height
+                )
+            )
+        } else {
+            Log.i(
+                TAG,
+                java.lang.String.format(
+                    "MediaPipe Face Mesh nose normalized coordinates (value range: [0, 1]): x=%f, y=%f",
+                    noseLandmark.getX(), noseLandmark.getY()
+                )
+            )
+        }
+    }
+
+    private fun stopCurrentPipeline() {
+
+        if (glSurfaceView != null) {
+            glSurfaceView!!.visibility = View.GONE
+        }
+        if (facemesh != null) {
+            facemesh!!.close()
+        }
     }
 
 

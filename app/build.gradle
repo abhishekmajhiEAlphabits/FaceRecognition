@@ -59,6 +59,10 @@ dependencies {
     implementation "com.google.dagger:hilt-android:2.42"
     implementation 'androidx.camera:camera-video:1.1.0'
 //    kapt "com.google.dagger:hilt-compiler:2.42"
+
+    implementation 'com.google.mediapipe:solution-core:latest.release'
+    implementation 'com.google.mediapipe:facemesh:latest.release'
+
 }
 
 
